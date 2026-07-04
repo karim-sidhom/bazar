@@ -400,7 +400,7 @@ function getFilteredItems(){
     return _allItems.filter(m => m.cat === _currentFilter);
 }
 
-const GPS_ACC=150, GPS_AGE=30000, GPS_DIST=0.05, GPS_OPT={enableHighAccuracy:true,timeout:20000,maximumAge:0};
+const GPS_REQUIRED_ACCURACY_M=150, GPS_MAX_FIX_AGE_MS=30000, GPS_APPLY_DISTANCE_KM=0.05, GPS_OPT={enableHighAccuracy:true,timeout:20000,maximumAge:0};
 const RADII=[0.5,1,2,5,10];
 
 function haversineKm(a,b,c,e){const R=6371,dL=d2r(c-a),dO=d2r(e-b),x=Math.sin(dL/2)**2+Math.cos(d2r(a))*Math.cos(d2r(c))*Math.sin(dO/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
@@ -568,14 +568,24 @@ function initApp(lat,lng){
     initPrayerTimes(lat,lng);
 }
 
-function isGoodGps(p){ if(!p||!p.coords) return false; const acc=p.coords.accuracy; if(!Number.isFinite(acc)||acc>GPS_ACC) return false; const age=Number.isFinite(p.timestamp)?Math.max(0,Date.now()-p.timestamp):Infinity; return age<=GPS_AGE; }
+// ── نموذج GPS مأخوذ من "صلاتي" ومُطوّع لبازار: يرفض القراءات الضعيفة بسبب واضح، لا يتجمّد أبداً ──
+function getGpsRejectReason(pos){
+    const coords = pos && pos.coords ? pos.coords : null;
+    if(!coords) return 'لا توجد إحداثيات';
+    const acc = coords.accuracy;
+    if(!Number.isFinite(acc)) return 'الدقة غير معروفة';
+    if(acc > GPS_REQUIRED_ACCURACY_M) return `الدقة أكبر من ${GPS_REQUIRED_ACCURACY_M}م`;
+    const ageMs = Number.isFinite(pos.timestamp) ? Math.max(0, Date.now()-pos.timestamp) : Infinity;
+    if(ageMs > GPS_MAX_FIX_AGE_MS) return 'قراءة GPS قديمة';
+    return '';
+}
 
 function applyGps(pos, notify=true){
     const {latitude:nl, longitude:no, accuracy:acc} = pos.coords;
     const at = Number.isFinite(acc) ? `${Math.round(acc)} م` : '?';
     const has = Number.isFinite(currentLat) && Number.isFinite(currentLng);
     const dist = has ? haversineKm(currentLat,currentLng,nl,no) : Infinity;
-    if(!has || dist>GPS_DIST){
+    if(!has || dist>GPS_APPLY_DISTANCE_KM){
         initApp(nl,no);
         if(has && notify) showNotif(`📍 موقع جديد: ${nl.toFixed(4)}، ${no.toFixed(4)} · دقة ${at}`, true);
         return true;
@@ -587,29 +597,36 @@ function startGPS(){
     if(gpsWatchId!==null){ navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId=null; }
     currentLat=null; currentLng=null;
     document.getElementById('gps-txt').textContent='📡 جارٍ تحديد الموقع...';
-    shopState('في انتظار إحداثيات GPS...');
+    shopState('في انتظار إحداثيات GPS دقيقة...');
     document.getElementById('global-maps-link').href='#';
     document.getElementById('zone-title').textContent='المتاجر القريبة';
     if(!navigator.geolocation){
-        document.getElementById('gps-txt').textContent='⚠️ GPS غير مدعوم في هذا المتصفح.';
+        document.getElementById('gps-txt').textContent='⚠️ المتصفح لا يدعم Geolocation — يرجى استخدام متصفح حديث.';
         shopState('⚠️ متصفحك لا يدعم تحديد الموقع الجغرافي.');
         return;
     }
-    let init=false;
+    let initialized=false;
     gpsWatchId = navigator.geolocation.watchPosition(pos=>{
-        if(!isGoodGps(pos)){
+        const rejectReason = getGpsRejectReason(pos);
+        if(rejectReason){
             const acc = pos.coords ? Math.round(pos.coords.accuracy) : '?';
-            document.getElementById('gps-txt').textContent = `📡 انتظار إشارة GPS... (دقة: ${acc} م)`;
-            if(!init) shopState('إشارة GPS ضعيفة، يرجى الانتظار...');
+            document.getElementById('gps-txt').textContent = `📡 انتظار إشارة GPS... (${rejectReason} — دقة: ${acc} م)`;
+            if(!initialized) shopState('في انتظار إشارة GPS دقيقة...');
             return;
         }
-        applyGps(pos, init); init=true;
+        applyGps(pos, initialized); initialized=true;
     }, err=>{
-        const msgs={1:'⚠️ رُفض إذن GPS. يرجى السماح بالموقع في المتصفح.',2:'⚠️ GPS غير متاح أو الإشارة ضعيفة.',3:'⚠️ انتهت مهلة GPS. حاول مجدداً.'};
-        const msg = (err && msgs[err.code]) || '⚠️ خطأ GPS غير معروف.';
-        document.getElementById('gps-txt').textContent = msg;
-        shopState(msg);
-        if(err && err.code===1 && gpsWatchId!==null){ navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId=null; }
+        // خطأ عابر بعد تثبيت أول موقع لا يوقف التطبيق أبداً — يستمر الانتظار بصمت
+        if(!initialized || (err && err.code===1)){
+            const msgs={1:'⚠️ رُفض إذن GPS. يرجى السماح بالموقع في المتصفح.',2:'⚠️ GPS غير متاح أو الإشارة ضعيفة.',3:'⚠️ انتهت مهلة GPS. حاول مجدداً.'};
+            const msg = (err && msgs[err.code]) || '⚠️ خطأ GPS غير معروف.';
+            document.getElementById('gps-txt').textContent = msg;
+            shopState(msg);
+        }
+        if(err && err.code===1){
+            initialized=true;
+            if(gpsWatchId!==null){ navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId=null; }
+        }
     }, GPS_OPT);
 }
 
