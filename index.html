@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>بازار — المتاجر القريبة</title>
 <meta name="theme-color" content="#060d3a">
+<meta name="description" content="بازار — أقرب متاجر الملابس والأحذية حولك، مع أوقات الصلاة">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="بازار">
 <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Tajawal:wght@300;400;500;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css" rel="stylesheet">
@@ -757,6 +765,42 @@ window.onload = function(){
     panel.style.display='none';
     startGPS();
 };
+
+// ══ PWA: تسجيل Service Worker + اقتراح التثبيت ══
+if('serviceWorker' in navigator){
+    window.addEventListener('load', function(){
+        navigator.serviceWorker.register('sw.js').catch(function(){});
+    });
+}
+let _deferredInstall = null;
+window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault();
+    _deferredInstall = e;
+    const btn = document.createElement('button');
+    btn.id = 'pwa-install-btn';
+    btn.textContent = '📲 تثبيت بازار على الجهاز';
+    Object.assign(btn.style, {
+        position:'fixed', bottom:'18px', left:'50%', transform:'translateX(-50%)',
+        zIndex:'50', background:'linear-gradient(135deg, rgba(255,215,0,0.92), rgba(200,134,10,0.92))',
+        color:'#020b2e', fontWeight:'800', fontSize:'13px', border:'1px solid rgba(255,215,0,0.6)',
+        borderRadius:'30px', padding:'11px 20px', cursor:'pointer',
+        boxShadow:'0 4px 22px rgba(255,215,0,0.45)', fontFamily:"'Tajawal',sans-serif"
+    });
+    btn.onclick = function(){
+        btn.remove();
+        if(!_deferredInstall) return;
+        _deferredInstall.prompt();
+        _deferredInstall.userChoice.then(function(choice){
+            if(choice.outcome==='accepted') showNotif('✅ تم تثبيت بازار بنجاح', true);
+            _deferredInstall = null;
+        });
+    };
+    document.body.appendChild(btn);
+});
+window.addEventListener('appinstalled', function(){
+    const b = document.getElementById('pwa-install-btn');
+    if(b) b.remove();
+});
 </script>
 </body>
 </html>
